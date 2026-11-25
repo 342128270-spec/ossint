@@ -56,6 +56,8 @@ $ python3 ossint.py search "mRNA lipid nanoparticle delivery" \
 
 ## v0.2：共享库（多智能体）
 
+完整的多智能体接入约定见 [docs/multi-agent.md](docs/multi-agent.md)。
+
 v0.1 的库在 `~/.ossint/index.db`，只有本机能用。v0.2 改成**工作区共享库**，所有智能体共用一份：
 
 ```
