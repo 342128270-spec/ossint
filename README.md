@@ -83,6 +83,18 @@ shared/intel/bin/ossint tag <uid> --add x  # 打标签
 
 **写入归属**：`OSSINT_AGENT` 环境变量 → 记到 `works.added_by`，`stats` 里能看谁贡献了多少条。
 
+
+### 从 v0.1 升级
+
+v0.1 的旧库（`~/.ossint/index.db`）不用手工处理。v0.2 首次打开旧库时会自动：
+
+1. `ALTER TABLE` 补上 `added_at` / `updated_at` / `added_by`
+2. 拆掉与主表对不齐的旧 FTS 影子表与触发器（否则 UPDATE 会报 `database disk image is malformed`）
+3. 按当前 DDL 重建 FTS 并 `rebuild` 全量索引
+4. 旧 `fetched_at` 迁到 `added_at`，写入方标记 `migrated-v0.1`
+
+已用 58 条 v0.1 真实库验证：迁移后完整性 ok、FTS 行数对齐、老条目照常可查。
+
 ## 设计取舍
 
 - **SQLite 本地库**：同一主题反复查不重复请求；`report` 可离线重出报告。

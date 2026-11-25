@@ -299,14 +299,67 @@ def connect(path=None, readonly=False):
     return c
 
 
+# v0.1 → v0.2 需要补的列（旧库没有 added_at/updated_at/added_by）
+MIGRATE_COLS = [
+    ("added_at", "TEXT"),
+    ("updated_at", "TEXT"),
+    ("added_by", "TEXT"),
+    ("citations", "INT DEFAULT 0"),
+]
+
+
+def migrate(c):
+    """把任意旧版本的库就地升级到当前 schema；重复执行安全。"""
+    cols = {r[1] for r in c.execute("PRAGMA table_info(works)")} if \
+        c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='works'").fetchone() \
+        else set()
+    if not cols:
+        return False  # 空库，交给 DDL 建
+    legacy_cols = {r[1] for r in c.execute("PRAGMA table_info(works)")}
+    changed = False
+    for name, ddl in MIGRATE_COLS:
+        if name not in legacy_cols:
+            c.execute(f"ALTER TABLE works ADD COLUMN {name} {ddl}")
+            changed = True
+    if not changed:
+        return False
+    # 旧库的 FTS 影子表常与主表对不齐（UPDATE 会报 malformed），
+    # 先拆掉 FTS 与触发器，交给 init_db 用当前 DDL 重建后 rebuild。
+    for trg in ("works_ai", "works_ad", "works_au"):
+        try:
+            c.execute(f"DROP TRIGGER IF EXISTS {trg}")
+        except sqlite3.Error:
+            pass
+    try:
+        c.execute("DROP TABLE IF EXISTS works_fts")
+    except sqlite3.Error as e:
+        print(f"[warn] 旧 FTS 表拆除失败（将重建）: {e}", file=sys.stderr)
+    # 旧库的 fetched_at / query 语义迁移到新列
+    if "fetched_at" in legacy_cols:
+        c.execute("UPDATE works SET added_at=fetched_at, updated_at=fetched_at "
+                  "WHERE added_at IS NULL OR updated_at IS NULL")
+    c.execute("UPDATE works SET added_by='migrated-v0.1' WHERE added_by IS NULL")
+    c.execute("UPDATE works SET citations=0 WHERE citations IS NULL")
+    print("[*] 库已从旧版升级到 schema v%d" % SCHEMA_VERSION, file=sys.stderr)
+    return True
+
+
 def init_db(c):
     for stmt in DDL:
         c.execute(stmt)
+    migrated = migrate(c)
     try:
         for stmt in FTS_DDL:
             c.execute(stmt)
     except sqlite3.Error as e:
         print(f"[warn] FTS5 不可用，全文检索将退化为 LIKE: {e}", file=sys.stderr)
+    row = c.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+    old_ver = int(row[0]) if row and str(row[0]).isdigit() else 0
+    if migrated or old_ver < SCHEMA_VERSION:
+        try:  # 索引与主表对不齐时重建
+            c.execute("INSERT INTO works_fts(works_fts) VALUES('rebuild')")
+        except sqlite3.Error:
+            pass
     c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)",
               (str(SCHEMA_VERSION),))
     c.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('created_at',?)",
