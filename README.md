@@ -53,6 +53,34 @@ $ python3 ossint.py search "mRNA lipid nanoparticle delivery" \
 
 `stats` 输出：49 条，年份 2023–2026，引用合计 5,338。
 
+
+## v0.2：共享库（多智能体）
+
+v0.1 的库在 `~/.ossint/index.db`，只有本机能用。v0.2 改成**工作区共享库**，所有智能体共用一份：
+
+```
+<工作区>/shared/intel/intel.db
+```
+
+探库顺序：`--db` → `$OSSINT_DB` → `<工作区>/shared/intel/intel.db` → `~/.ossint/index.db`
+
+**并发安全**：WAL + `busy_timeout=15s` + `BEGIN IMMEDIATE` 重试。实测 3 个进程同时写，零锁错误。
+
+**新命令**：
+
+```bash
+shared/intel/bin/ossint find "crispr"      # 查本地库，走 FTS5，不联网
+shared/intel/bin/ossint export --format jsonl > dump.jsonl
+shared/intel/bin/ossint import dump.jsonl
+shared/intel/bin/ossint doctor             # 完整性/日志模式/FTS/写锁
+shared/intel/bin/ossint schema             # 打印表结构
+shared/intel/bin/ossint tag <uid> --add x  # 打标签
+```
+
+**表结构**：`works`（主表）· `works_fts`（FTS5 全文）· `queries`（检索历史）· `work_queries`（多对多）· `tags` · `meta`
+
+**写入归属**：`OSSINT_AGENT` 环境变量 → 记到 `works.added_by`，`stats` 里能看谁贡献了多少条。
+
 ## 设计取舍
 
 - **SQLite 本地库**：同一主题反复查不重复请求；`report` 可离线重出报告。
